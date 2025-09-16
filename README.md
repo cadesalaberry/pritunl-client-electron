@@ -26,3 +26,23 @@ bash <(curl -s https://raw.githubusercontent.com/pritunl/pritunl-client-electron
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/pritunl/pritunl-client-electron/master/tools/uninstall_macos.sh)
 ```
+
+## Keychain Provider Integration
+
+The Pritunl client includes automatic OTP retrieval from password managers like 1Password and Bitwarden.
+
+**📖 [Complete Documentation](keychain/README.md)**
+
+### Quick Start
+- Install a password manager CLI (e.g., `brew install --cask 1password-cli`)
+- Authenticate with the CLI
+- Connect to OTP-enabled VPN profiles - keychain integration works automatically!
+
+### Control Options
+```bash
+# Disable all keychain providers
+pritunl-cli start profile123 --disable-keychain
+
+# Use only specific providers
+pritunl-cli start profile123 --keychain-providers=1password,bitwarden
+```

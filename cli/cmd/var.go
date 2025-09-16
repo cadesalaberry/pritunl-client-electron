@@ -1,11 +1,13 @@
 package cmd
 
 var (
-	mode           string
-	password       string
-	passwordPrompt bool
-	jsonFormat     bool
-	jsonFormated   bool
+	mode                     string
+	password                 string
+	passwordPrompt           bool
+	disableKeychain          bool
+	enabledKeychainProviders string // Comma-separated list of provider IDs
+	jsonFormat               bool
+	jsonFormated             bool
 )
 
 func init() {
@@ -29,6 +31,18 @@ func init() {
 		"r",
 		false,
 		"Prompt for VPN password",
+	)
+	StartCmd.Flags().BoolVar(
+		&disableKeychain,
+		"disable-keychain",
+		false,
+		"Disable ALL keychain provider integrations",
+	)
+	StartCmd.Flags().StringVar(
+		&enabledKeychainProviders,
+		"keychain-providers",
+		"",
+		"Comma-separated list of keychain providers to enable (e.g., 1password,bitwarden)",
 	)
 
 	ListCmd.Flags().BoolVarP(

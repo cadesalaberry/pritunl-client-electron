@@ -6,6 +6,10 @@ import * as Blueprint from "@blueprintjs/core"
 import * as Constants from "../Constants"
 import PageInput from "./PageInput";
 import * as Logger from "../Logger";
+import * as Alert from "../Alert";
+import ConfigStore from "../stores/ConfigStore";
+import { getAvailableProviders, getOTPFromAny } from "../utils/providers";
+import type { KeychainProvider } from "../utils/providers";
 
 interface Props {
 	profile: ProfileTypes.ProfileRo
@@ -40,6 +44,12 @@ interface State {
 	dialog: boolean
 	confirm: number
 	confirming: string
+	keychainRef: string
+	keychainProviders: KeychainProvider[]
+	selectedProvider: KeychainProvider | null
+	keychainLoading: boolean
+	keychainEnabled: boolean
+	keychainAutoRetrieved: boolean
 }
 
 const css = {
@@ -103,6 +113,42 @@ export default class ProfileConnect extends React.Component<Props, State> {
 			dialog: false,
 			confirm: 0,
 			confirming: null,
+			keychainRef: "",
+			keychainProviders: [],
+			selectedProvider: null,
+			keychainLoading: false,
+			keychainEnabled: true,
+			keychainAutoRetrieved: false,
+		}
+	}
+
+	async componentDidMount(): Promise<void> {
+		// Check if keychain providers are enabled in configuration and get available providers
+		const config = ConfigStore.config
+		const keychainEnabled = !config.disable_keychain
+		
+		if (keychainEnabled) {
+			try {
+				const providers = await getAvailableProviders(config.enabled_keychain_providers)
+				this.setState({
+					...this.state,
+					keychainProviders: providers,
+					selectedProvider: providers.length > 0 ? providers[0] : null,
+					keychainEnabled: keychainEnabled,
+				})
+			} catch (err) {
+				Logger.warning("Keychain: Failed to check available providers")
+				this.setState({
+					...this.state,
+					keychainEnabled: keychainEnabled,
+				})
+			}
+		} else {
+			this.setState({
+				...this.state,
+				keychainEnabled: false,
+				keychainProviders: [],
+			})
 		}
 	}
 
@@ -223,7 +269,15 @@ export default class ProfileConnect extends React.Component<Props, State> {
 				hasToken: tokenValid,
 				preConnMsgOnly: !authTypes.length,
 				mode: mode,
+				keychainAutoRetrieved: false, // Reset for new dialog
 			})
+			
+			// Try to automatically retrieve OTP if we need it and keychain is available
+			if (hasOtp) {
+				setTimeout(async () => {
+					await this.tryAutoGetKeychainOTP()
+				}, 100) // Small delay to let the dialog render
+			}
 		} else {
 			await this.connect(mode, "", "")
 		}
@@ -340,7 +394,90 @@ export default class ProfileConnect extends React.Component<Props, State> {
 			mode: "",
 			preConnMsgOnly: false,
 			changed: false,
+			keychainRef: "",
+			keychainLoading: false,
+			keychainAutoRetrieved: false,
 		})
+	}
+
+	tryAutoGetKeychainOTP = async (): Promise<boolean> => {
+		// Try to automatically retrieve OTP if we have a stored reference
+		if (!this.state.keychainEnabled || this.state.keychainProviders.length === 0) {
+			return false
+		}
+
+		// Check if we have a stored reference for this profile
+		const profileId = this.props.profile.id
+		const storedRef = localStorage.getItem(`keychain_ref_${profileId}`)
+		
+		if (!storedRef || this.state.keychainAutoRetrieved) {
+			return false
+		}
+
+		try {
+			Logger.info(`Keychain: Auto-retrieving OTP for profile ${profileId}`)
+			const result = await getOTPFromAny(storedRef)
+			
+			this.setState({
+				...this.state,
+				otp: result.otpCode,
+				keychainRef: storedRef,
+				selectedProvider: result.provider,
+				keychainAutoRetrieved: true,
+				changed: true,
+			})
+
+			Logger.info(`Keychain: Auto-retrieval successful using ${result.provider.name}`)
+			return true
+		} catch (err) {
+			Logger.warning(`Keychain: Auto-retrieval failed: ${err.message}`)
+			return false
+		}
+	}
+
+	getKeychainOTP = async (): Promise<void> => {
+		if (!this.state.keychainRef.trim()) {
+			Logger.warning("Keychain: No reference provided")
+			return
+		}
+
+		if (!this.state.selectedProvider) {
+			Logger.warning("Keychain: No provider selected")
+			return
+		}
+
+		this.setState({
+			...this.state,
+			keychainLoading: true,
+		})
+
+		try {
+			const result = await getOTPFromAny(this.state.keychainRef)
+			
+			// Save the reference for future auto-retrieval
+			const profileId = this.props.profile.id
+			localStorage.setItem(`keychain_ref_${profileId}`, this.state.keychainRef)
+			
+			this.setState({
+				...this.state,
+				otp: result.otpCode,
+				selectedProvider: result.provider,
+				changed: true,
+				keychainLoading: false,
+			})
+
+			Logger.info(`Keychain: Successfully retrieved OTP code using ${result.provider.name}`)
+		} catch (err) {
+			Logger.error(`Keychain: ${err.message}`)
+			
+			this.setState({
+				...this.state,
+				keychainLoading: false,
+			})
+
+			// Show error to user
+			Alert.error(`Keychain Error: ${err.message}`, 5)
+		}
 	}
 
 	closeDialogConfirm = (): void => {
@@ -575,28 +712,89 @@ export default class ProfileConnect extends React.Component<Props, State> {
 							})
 						}}
 					/>
-					<PageInput
-						disabled={this.state.disabled}
-						hidden={!this.state.hasOtp}
-						autoFocus={this.state.autoFocus === "otp"}
-						label="Authenticator Passcode"
-						help="Enter profile passcode from authenticator app."
-						type="text"
-						placeholder="Enter passcode"
-						value={this.state.otp}
-						onKeyUp={(key: string): void => {
-							if (key === "Enter") {
-								this.closeDialogConfirm()
-							}
-						}}
-						onChange={(val: string): void => {
-							this.setState({
-								...this.state,
-								changed: true,
-								otp: val,
-							})
-						}}
-					/>
+					<div hidden={!this.state.hasOtp}>
+						<PageInput
+							disabled={this.state.disabled}
+							autoFocus={this.state.autoFocus === "otp"}
+							label="Authenticator Passcode"
+							help="Enter profile passcode from authenticator app or use a keychain provider."
+							type="text"
+							placeholder="Enter passcode"
+							value={this.state.otp}
+							onKeyUp={(key: string): void => {
+								if (key === "Enter") {
+									this.closeDialogConfirm()
+								}
+							}}
+							onChange={(val: string): void => {
+								this.setState({
+									...this.state,
+									changed: true,
+									otp: val,
+								})
+							}}
+						/>
+						<div hidden={!this.state.keychainEnabled || this.state.keychainProviders.length === 0} style={{marginTop: "10px"}}>
+							{this.state.keychainAutoRetrieved && this.state.selectedProvider && (
+								<div style={{marginBottom: "10px", padding: "8px", backgroundColor: "#0f9960", color: "white", borderRadius: "3px", fontSize: "12px"}}>
+									✓ OTP automatically retrieved from {this.state.selectedProvider.name}
+								</div>
+							)}
+							{this.state.keychainProviders.length > 1 && (
+								<div style={{marginBottom: "10px"}}>
+									<label className="bp5-label">
+										Keychain Provider
+										<div className="bp5-select">
+											<select 
+												value={this.state.selectedProvider?.id || ""}
+												onChange={(e) => {
+													const provider = this.state.keychainProviders.find(p => p.id === e.target.value)
+													this.setState({
+														...this.state,
+														selectedProvider: provider || null,
+													})
+												}}
+											>
+												{this.state.keychainProviders.map(provider => (
+													<option key={provider.id} value={provider.id}>
+														{provider.name}
+													</option>
+												))}
+											</select>
+										</div>
+									</label>
+								</div>
+							)}
+							<PageInput
+								disabled={this.state.disabled || this.state.keychainLoading}
+								label={`${this.state.selectedProvider?.name || 'Keychain'} Reference`}
+								help={this.state.selectedProvider?.getHelpText() || "Enter reference to your OTP item"}
+								type="text"
+								placeholder={this.state.selectedProvider?.getExamples()[0] || "item reference"}
+								value={this.state.keychainRef}
+								onChange={(val: string): void => {
+									this.setState({
+										...this.state,
+										keychainRef: val,
+									})
+								}}
+							/>
+							{this.state.selectedProvider && this.state.selectedProvider.getExamples().length > 1 && (
+								<div style={{fontSize: "12px", color: "#666", marginTop: "5px"}}>
+									Examples: {this.state.selectedProvider.getExamples().slice(1).join(", ")}
+								</div>
+							)}
+							<button
+								className="bp5-button bp5-intent-primary bp5-icon-key"
+								type="button"
+								disabled={this.state.disabled || this.state.keychainLoading || !this.state.keychainRef.trim() || !this.state.selectedProvider}
+								onClick={this.getKeychainOTP}
+								style={{marginTop: "5px"}}
+							>
+								{this.state.keychainLoading ? "Getting OTP..." : `Get OTP from ${this.state.selectedProvider?.name || 'Keychain'}`}
+							</button>
+						</div>
+					</div>
 					<PageInput
 						disabled={this.state.disabled}
 						hidden={!this.state.hasYubikey}

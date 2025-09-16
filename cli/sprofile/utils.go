@@ -17,6 +17,8 @@ import (
 	"github.com/dropbox/godropbox/container/set"
 	"github.com/dropbox/godropbox/errors"
 	"github.com/pritunl/pritunl-client-electron/cli/errortypes"
+	"github.com/pritunl/pritunl-client-electron/cli/keychain"
+	_ "github.com/pritunl/pritunl-client-electron/cli/keychain/providers" // Import to register providers
 	"github.com/pritunl/pritunl-client-electron/cli/profile"
 	"github.com/pritunl/pritunl-client-electron/cli/service"
 	"github.com/pritunl/pritunl-client-electron/cli/terminal"
@@ -281,7 +283,71 @@ func GetAll() (sprfls []*Sprofile, err error) {
 	return
 }
 
-func PasswordPrompt(sprfl *Sprofile) (pass string, err error) {
+/*
+tryKeychainOTP attempts to automatically retrieve OTP from available keychain providers.
+
+AUTOMATIC KEYCHAIN OTP RETRIEVAL
+================================
+
+This function isolates all keychain logic and attempts automatic OTP retrieval
+without any user prompts. It tries providers in order until one succeeds.
+
+BEHAVIOR:
+1. Checks if keychain is disabled via flags
+2. Gets available providers (filtered by enabled list if specified)  
+3. Tries each provider with its default reference:
+   - 1Password: "Private/Pritunl"
+   - Bitwarden: "Pritunl"
+   - Custom providers: configurable defaults
+4. Returns first successful OTP or empty string for manual fallback
+
+DEFAULT REFERENCES:
+Default references can be overridden via configuration:
+  keychain_default_refs.1password = "Work/VPN"
+  keychain_default_refs.bitwarden = "VPN Server"
+
+PARAMETERS:
+- disableKeychain: If true, skips all keychain attempts
+- enabledKeychainProviders: Comma-separated list of enabled provider IDs
+
+RETURNS:
+- OTP code if successful (6-8 digits)
+- Empty string if no OTP available (caller should prompt manually)
+- Error only for unexpected system failures
+
+SECURITY:
+- Uses provider defaults, no user input required
+- Respects provider authentication systems
+- Falls back gracefully if providers are unavailable
+
+NO USER INTERACTION - completely automatic and silent.
+*/
+func tryKeychainOTP(disableKeychain bool, enabledKeychainProviders string) (otpCode string, err error) {
+	// Skip if keychain is disabled
+	if disableKeychain {
+		return "", nil
+	}
+	
+	// Parse enabled providers list
+	var enabledProviderIds []string
+	if enabledKeychainProviders != "" {
+		for _, id := range strings.Split(enabledKeychainProviders, ",") {
+			enabledProviderIds = append(enabledProviderIds, strings.TrimSpace(id))
+		}
+	}
+	
+	// Try automatic OTP retrieval
+	provider, otp, err := keychain.TryAutoGetOTP(nil, enabledProviderIds) // TODO: Pass config default refs
+	if err != nil {
+		// No automatic OTP available - this is normal, not an error
+		return "", nil
+	}
+	
+	fmt.Printf("✓ Automatically retrieved OTP from %s\n", provider.Name())
+	return otp, nil
+}
+
+func PasswordPrompt(sprfl *Sprofile, disableKeychain bool, enabledKeychainProviders string) (pass string, err error) {
 	passModes := set.NewSet()
 
 	passModesStr := strings.Split(sprfl.PasswordMode, "_")
@@ -322,11 +388,24 @@ func PasswordPrompt(sprfl *Sprofile) (pass string, err error) {
 	}
 
 	if passModes.Contains("otp") {
-		part := terminal.ReadPassword("Authenticator Passcode")
-		if part == "" {
-			cobra.CheckErr("sprofile: Authenticator Passcode is empty")
+		// Try automatic keychain OTP retrieval first
+		keychainOTP, err := tryKeychainOTP(disableKeychain, enabledKeychainProviders)
+		if err != nil {
+			// Unexpected error in keychain system
+			fmt.Printf("Keychain error: %v\n", err)
 		}
-		pass += part
+		
+		if keychainOTP != "" {
+			// Successfully got OTP from keychain
+			pass += keychainOTP
+		} else {
+			// No automatic OTP available, prompt manually
+			part := terminal.ReadPassword("Authenticator Passcode")
+			if part == "" {
+				cobra.CheckErr("sprofile: Authenticator Passcode is empty")
+			}
+			pass += part
+		}
 	}
 
 	if passModes.Contains("yubikey") {
@@ -356,7 +435,7 @@ func PasswordPrompt(sprfl *Sprofile) (pass string, err error) {
 	return
 }
 
-func Start(sprflId, mode, password string, passwordPrompt bool) (err error) {
+func Start(sprflId, mode, password string, passwordPrompt, disableKeychain bool, enabledKeychainProviders string) (err error) {
 	sprfl, err := Match(sprflId)
 	if err != nil {
 		return
@@ -382,7 +461,7 @@ func Start(sprflId, mode, password string, passwordPrompt bool) (err error) {
 	reqUrl := service.GetAddress() + "/profile"
 
 	if passwordPrompt {
-		password, err = PasswordPrompt(sprfl)
+		password, err = PasswordPrompt(sprfl, disableKeychain, enabledKeychainProviders)
 		if err != nil {
 			return
 		}

@@ -18,16 +18,19 @@ var (
 )
 
 type ConfigData struct {
-	path              string `json:"-"`
-	loaded            bool   `json:"-"`
-	DisableDnsWatch   bool   `json:"disable_dns_watch"`
-	EnableDnsRefresh  bool   `json:"enable_dns_refresh"`
-	DisableWakeWatch  bool   `json:"disable_wake_watch"`
-	DisableNetClean   bool   `json:"disable_net_clean"`
-	DisableWgDns      bool   `json:"disable_wg_dns"`
-	ForceLocalTpm     bool   `json:"force_local_tpm"`
-	InterfaceMetric   int    `json:"interface_metric"`
-	EnclavePrivateKey string `json:"enclave_private_key"`
+	path                    string            `json:"-"`
+	loaded                  bool              `json:"-"`
+	DisableDnsWatch         bool              `json:"disable_dns_watch"`
+	EnableDnsRefresh        bool              `json:"enable_dns_refresh"`
+	DisableWakeWatch        bool              `json:"disable_wake_watch"`
+	DisableNetClean         bool              `json:"disable_net_clean"`
+	DisableWgDns            bool              `json:"disable_wg_dns"`
+	DisableKeychain         bool              `json:"disable_keychain"`
+	EnabledKeychainProviders []string          `json:"enabled_keychain_providers"`
+	KeychainDefaultRefs     map[string]string `json:"keychain_default_refs"` // provider_id -> default_reference
+	ForceLocalTpm           bool              `json:"force_local_tpm"`
+	InterfaceMetric         int               `json:"interface_metric"`
+	EnclavePrivateKey       string            `json:"enclave_private_key"`
 }
 
 func (c *ConfigData) Save() (err error) {

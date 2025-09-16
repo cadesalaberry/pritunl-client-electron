@@ -9,6 +9,8 @@ export interface Config {
 	disable_net_clean?: boolean
 	disable_browser_open?: boolean
 	disable_wg_dns?: boolean
+	disable_keychain?: boolean
+	enabled_keychain_providers?: string[] // List of enabled provider IDs
 	interface_metric?: number
 }
 

@@ -177,6 +177,18 @@ export default class ConfigView extends React.Component<{}, State> {
 			<div className="layout horizontal">
 				<PageSwitch
 					disabled={this.state.disabled}
+					label="Disable ALL keychain providers"
+					help="Completely disable automatic OTP retrieval from all keychain providers. Requires restart to take effect."
+					checked={!!this.state.config.disable_keychain}
+					onToggle={(): void => {
+						this.set("disable_keychain",
+							!this.state.config.disable_keychain)
+					}}
+				/>
+			</div>
+			<div className="layout horizontal">
+				<PageSwitch
+					disabled={this.state.disabled}
 					label="Enable safe storage"
 					help="Enable encryption of profile keys with safe storage. May cause client to become unresponsive or connections to fail."
 					checked={!!safeStorage}
